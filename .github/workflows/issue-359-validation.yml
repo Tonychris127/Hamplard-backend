@@ -1,0 +1,49 @@
+name: Issue 359 validation
+on:
+  push:
+    branches: [validation/359-auth-retention-20261125]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [baseline, fix]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: auth_purge_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:test-only@localhost:5432/auth_purge_test
+      AUTH_PURGE_TEST_DATABASE_URL: postgresql://postgres:test-only@localhost:5432/auth_purge_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.revision == 'baseline' && 'd288cd13beb541b6c3b1b84150eabeea49df0802' || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci --no-audit --no-fund
+      - run: npx --no-install prisma generate
+      - run: npx --no-install prisma db push --skip-generate
+      - run: npm test -- --runInBand auth-cleanup.service.spec.ts auth-cleanup.integration.spec.ts
+        if: matrix.revision == 'fix'
+      - run: npx --no-install prettier --check --single-quote --trailing-comma all src/modules/auth/auth-cleanup*.ts
+        if: matrix.revision == 'fix'
+      - run: npm run build
+        continue-on-error: true
+      - run: npm test -- --runInBand
+        continue-on-error: true
